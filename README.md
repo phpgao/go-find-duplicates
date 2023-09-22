@@ -54,6 +54,7 @@ Flags (all optional):
                             .DS_Store, System Volume Information, $RECYCLE.BIN etc.)
   -h, --help                display help
   -m, --minsize uint        minimum size of file in KiB to consider (default 4)
+  -v, --moveto string move dup files to another dir
   -o, --output string       following modes are accepted:
                              text = creates a text file in current directory with basic information
                               csv = creates a csv file in current directory with detailed information

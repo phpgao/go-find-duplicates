@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"runtime/debug"
+	"sort"
 	"strings"
 	"time"
 
@@ -50,9 +51,17 @@ var flags struct {
 	getMinSize       func() int64
 	getParallelism   func() int
 	isThorough       func() bool
+	moveTo           func() string
 	useStdout        func() bool
 	getVerbose       func() bool
 	getVersion       func() bool
+}
+
+func setupMoveToOpt() {
+	moveToStrPtr := flag.StringP("moveto", "v", "", "move dup files to another dir")
+	flags.moveTo = func() string {
+		return *moveToStrPtr
+	}
 }
 
 func setupExclusionsOpt() {
@@ -225,6 +234,7 @@ func setupFlags() {
 	setupHelpOpt()
 	setupMinSizeOpt()
 	setupOutputModeOpt()
+	setupMoveToOpt()
 	setupParallelismOpt()
 	setupStdoutOpt()
 	setupThoroughOpt()
@@ -261,6 +271,54 @@ func createReportFileIfApplicable(runID string, outputMode string, useStdout boo
 		os.Exit(exitCodeReportFileCreationFailed)
 	}
 	return reportFileName, f
+}
+
+func moveToNewDir(duplicates *entity.DigestToFiles, allFiles entity.FilePathToMeta) {
+	moveToDir, err := filepath.Abs(flags.moveTo())
+	if err != nil {
+		fmte.Printf("not a abs path: err=%s\n", err.Error())
+		return
+	}
+	moveToDir = filepath.Clean(moveToDir)
+	for iter := duplicates.Iterator(); iter.HasNext(); {
+		_, paths := iter.Next()
+		sort.Slice(paths, func(i, j int) bool {
+			path1 := paths[i]
+			path2 := paths[j]
+			arr1 := strings.Split(path1, "/")
+			arr2 := strings.Split(path2, "/")
+			if len(arr1) != len(arr2) {
+				return len(arr1) > len(arr2)
+			}
+			meta1, ok1 := allFiles[path1]
+			meta2, ok2 := allFiles[path2]
+			if ok1 && ok2 {
+				if meta1.Size != meta2.Size {
+					panic("file size not same: file1=" + paths[i] + ",file2=" + paths[j])
+				}
+				if meta1.ModifiedTimestamp != meta2.ModifiedTimestamp {
+					return meta1.ModifiedTimestamp > meta2.ModifiedTimestamp
+				}
+			}
+			return path1 < path2
+		})
+		for _, f := range paths[1:] {
+			newPath := filepath.Join(moveToDir, f)
+			fmte.Printf("mv %s %s\n", f, newPath)
+			d := filepath.Dir(newPath)
+			if _, err := os.Stat(d); os.IsNotExist(err) {
+				if err = os.MkdirAll(d, os.ModePerm); err != nil {
+					fmte.Printf("mkdir error, dir=%s, err=%s\n", d, err.Error())
+					continue
+				}
+			}
+			err := os.Rename(f, newPath)
+			if err != nil {
+				fmte.Printf("\terr=%s\n", err.Error())
+			}
+		}
+	}
+
 }
 
 func main() {
@@ -311,4 +369,9 @@ func main() {
 	} else if reportFileName != "" {
 		fmte.Printf("View duplicates report here: %s\n", reportFileName)
 	}
+	if moveToDir := flags.moveTo(); len(moveToDir) > 0 {
+		fmte.Printf("move to:%s\n", moveToDir)
+		moveToNewDir(duplicates, allFiles)
+	}
+
 }
